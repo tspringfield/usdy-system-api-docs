@@ -637,3 +637,455 @@ components:
       example: "0x1111111111111111111111111111111111111111"
 
 security: [] # no auth at the API layer
+
+# -------------------------------------------------------------------------
+# Smart contract ABIs (for frontend consumption)
+# -------------------------------------------------------------------------
+x-contract-interfaces:
+  IERC20:
+    kind: interface
+    abi:
+      - type: function
+        stateMutability: view
+        name: name
+        inputs: []
+        outputs: [{ name: "", type: string }]
+      - type: function
+        stateMutability: view
+        name: symbol
+        inputs: []
+        outputs: [{ name: "", type: string }]
+      - type: function
+        stateMutability: view
+        name: decimals
+        inputs: []
+        outputs: [{ name: "", type: uint8 }]
+      - type: function
+        stateMutability: view
+        name: totalSupply
+        inputs: []
+        outputs: [{ name: "", type: uint256 }]
+      - type: function
+        stateMutability: view
+        name: balanceOf
+        inputs: [{ name: account, type: address }]
+        outputs: [{ name: "", type: uint256 }]
+      - type: function
+        stateMutability: view
+        name: allowance
+        inputs:
+          - { name: owner, type: address }
+          - { name: spender, type: address }
+        outputs: [{ name: "", type: uint256 }]
+      - type: function
+        stateMutability: nonpayable
+        name: approve
+        inputs:
+          - { name: spender, type: address }
+          - { name: amount, type: uint256 }
+        outputs: [{ name: "", type: bool }]
+      - type: function
+        stateMutability: nonpayable
+        name: transfer
+        inputs:
+          - { name: to, type: address }
+          - { name: amount, type: uint256 }
+        outputs: [{ name: "", type: bool }]
+      - type: function
+        stateMutability: nonpayable
+        name: transferFrom
+        inputs:
+          - { name: from, type: address }
+          - { name: to, type: address }
+          - { name: amount, type: uint256 }
+        outputs: [{ name: "", type: bool }]
+      - type: event
+        name: Transfer
+        inputs:
+          - { name: from, type: address, indexed: true }
+          - { name: to, type: address, indexed: true }
+          - { name: value, type: uint256, indexed: false }
+        anonymous: false
+      - type: event
+        name: Approval
+        inputs:
+          - { name: owner, type: address, indexed: true }
+          - { name: spender, type: address, indexed: true }
+          - { name: value, type: uint256, indexed: false }
+        anonymous: false
+
+  USDy:
+    kind: contract
+    notes: "ERC20 + Burnable + AccessControl; custom BalanceSnapshot event and restricted mint."
+    abi:
+      - {
+          type: function,
+          stateMutability: view,
+          name: name,
+          inputs: [],
+          outputs: [{ name: "", type: string }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: symbol,
+          inputs: [],
+          outputs: [{ name: "", type: string }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: decimals,
+          inputs: [],
+          outputs: [{ name: "", type: uint8 }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: totalSupply,
+          inputs: [],
+          outputs: [{ name: "", type: uint256 }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: balanceOf,
+          inputs: [{ name: account, type: address }],
+          outputs: [{ name: "", type: uint256 }],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: transfer,
+          inputs:
+            [{ name: to, type: address }, { name: amount, type: uint256 }],
+          outputs: [{ name: "", type: bool }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: allowance,
+          inputs:
+            [{ name: owner, type: address }, { name: spender, type: address }],
+          outputs: [{ name: "", type: uint256 }],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: approve,
+          inputs:
+            [{ name: spender, type: address }, { name: amount, type: uint256 }],
+          outputs: [{ name: "", type: bool }],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: transferFrom,
+          inputs:
+            [
+              { name: from, type: address },
+              { name: to, type: address },
+              { name: amount, type: uint256 },
+            ],
+          outputs: [{ name: "", type: bool }],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: burn,
+          inputs: [{ name: amount, type: uint256 }],
+          outputs: [],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: burnFrom,
+          inputs:
+            [{ name: account, type: address }, { name: amount, type: uint256 }],
+          outputs: [],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: MINTER_ROLE,
+          inputs: [],
+          outputs: [{ name: "", type: bytes32 }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: hasRole,
+          inputs:
+            [{ name: role, type: bytes32 }, { name: account, type: address }],
+          outputs: [{ name: "", type: bool }],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: grantRole,
+          inputs:
+            [{ name: role, type: bytes32 }, { name: account, type: address }],
+          outputs: [],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: revokeRole,
+          inputs:
+            [{ name: role, type: bytes32 }, { name: account, type: address }],
+          outputs: [],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: renounceRole,
+          inputs:
+            [{ name: role, type: bytes32 }, { name: account, type: address }],
+          outputs: [],
+        }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: mint,
+          inputs:
+            [{ name: to, type: address }, { name: amount, type: uint256 }],
+          outputs: [],
+        }
+      - type: event
+        name: BalanceSnapshot
+        inputs:
+          - { name: account, type: address, indexed: true }
+          - { name: balance, type: uint256, indexed: false }
+          - { name: reason, type: uint8, indexed: false }
+        anonymous: false
+      - {
+          type: event,
+          name: Transfer,
+          inputs:
+            [
+              { name: from, type: address, indexed: true },
+              { name: to, type: address, indexed: true },
+              { name: value, type: uint256, indexed: false },
+            ],
+          anonymous: false,
+        }
+      - {
+          type: event,
+          name: Approval,
+          inputs:
+            [
+              { name: owner, type: address, indexed: true },
+              { name: spender, type: address, indexed: true },
+              { name: value, type: uint256, indexed: false },
+            ],
+          anonymous: false,
+        }
+      - {
+          type: event,
+          name: RoleGranted,
+          inputs:
+            [
+              { name: role, type: bytes32, indexed: true },
+              { name: account, type: address, indexed: true },
+              { name: sender, type: address, indexed: true },
+            ],
+          anonymous: false,
+        }
+      - {
+          type: event,
+          name: RoleRevoked,
+          inputs:
+            [
+              { name: role, type: bytes32, indexed: true },
+              { name: account, type: address, indexed: true },
+              { name: sender, type: address, indexed: true },
+            ],
+          anonymous: false,
+        }
+
+  USDyVault:
+    kind: contract
+    notes: "Mint USDy for USDT/USDC; two-step redeem with 7-day delay."
+    abi:
+      - {
+          type: function,
+          stateMutability: view,
+          name: USDY_TOKEN,
+          inputs: [],
+          outputs: [{ name: "", type: address }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: USDT_TOKEN,
+          inputs: [],
+          outputs: [{ name: "", type: address }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: USDC_TOKEN,
+          inputs: [],
+          outputs: [{ name: "", type: address }],
+        }
+      - {
+          type: function,
+          stateMutability: view,
+          name: REDEEM_DELAY,
+          inputs: [],
+          outputs: [{ name: "", type: uint256 }],
+        }
+      - type: function
+        stateMutability: nonpayable
+        name: mint
+        inputs:
+          - { name: amount, type: uint256 }
+          - { name: stablecoin, type: uint8 } # 0 = USDT, 1 = USDC
+          - { name: recipient, type: address }
+        outputs: []
+      - type: function
+        stateMutability: nonpayable
+        name: requestRedeem
+        inputs:
+          - { name: amount, type: uint256 }
+          - { name: stablecoin, type: uint8 } # 0 = USDT, 1 = USDC
+          - { name: recipient, type: address }
+        outputs:
+          - { name: requestId, type: uint256 }
+      - {
+          type: function,
+          stateMutability: nonpayable,
+          name: claimRedeem,
+          inputs: [{ name: requestId, type: uint256 }],
+          outputs: [],
+        }
+      - type: function
+        stateMutability: view
+        name: getRedeemRequest
+        inputs:
+          - { name: account, type: address }
+          - { name: requestId, type: uint256 }
+        outputs:
+          - { name: amount, type: uint256 }
+          - { name: stablecoin, type: uint8 } # 0 = USDT, 1 = USDC
+          - { name: recipient, type: address }
+          - { name: availableAt, type: uint256 }
+          - { name: claimed, type: bool }
+      - type: function
+        stateMutability: nonpayable
+        name: withdraw
+        inputs:
+          - { name: amount, type: uint256 }
+          - { name: stablecoin, type: uint8 } # 0 = USDT, 1 = USDC
+          - { name: to, type: address }
+        outputs: []
+      - type: event
+        name: Minted
+        inputs:
+          - { name: account, type: address, indexed: true }
+          - { name: stablecoin, type: uint8, indexed: true }
+          - { name: amount, type: uint256, indexed: false }
+          - { name: recipient, type: address, indexed: true }
+          - { name: recipientUSDyBalanceAfter, type: uint256, indexed: false }
+        anonymous: false
+      - type: event
+        name: RedeemRequested
+        inputs:
+          - { name: account, type: address, indexed: true }
+          - { name: stablecoin, type: uint8, indexed: true }
+          - { name: amount, type: uint256, indexed: false }
+          - { name: recipient, type: address, indexed: true }
+          - { name: availableAt, type: uint256, indexed: false }
+          - { name: requestId, type: uint256, indexed: false }
+          - { name: accountUSDyBalanceAfter, type: uint256, indexed: false }
+        anonymous: false
+      - type: event
+        name: Redeemed
+        inputs:
+          - { name: account, type: address, indexed: true }
+          - { name: stablecoin, type: uint8, indexed: true }
+          - { name: amount, type: uint256, indexed: false }
+          - { name: recipient, type: address, indexed: true }
+          - { name: requestId, type: uint256, indexed: false }
+        anonymous: false
+      - type: event
+        name: Withdrawn
+        inputs:
+          - { name: to, type: address, indexed: true }
+          - { name: stablecoin, type: uint8, indexed: true }
+          - { name: amount, type: uint256, indexed: false }
+        anonymous: false
+
+  WeeklyRewardsDistributor:
+    kind: contract
+    notes: "EIP‑712 based weekly reward claims."
+    abi:
+      - {
+          type: function,
+          stateMutability: view,
+          name: rewardManager,
+          inputs: [],
+          outputs: [{ name: "", type: address }],
+        }
+      - type: function
+        stateMutability: nonpayable
+        name: setRewardManager
+        inputs: [{ name: newManager, type: address }]
+        outputs: []
+      - type: function
+        stateMutability: nonpayable
+        name: withdraw
+        inputs:
+          - { name: token, type: address }
+          - { name: to, type: address }
+          - { name: amount, type: uint256 }
+        outputs: []
+      - type: function
+        stateMutability: nonpayable
+        name: claim
+        inputs:
+          - { name: token, type: address }
+          - { name: amount, type: uint256 }
+          - { name: epoch, type: uint64 }
+          - { name: nonceMask, type: uint256 }
+          - { name: signature, type: bytes }
+        outputs: []
+      - type: function
+        stateMutability: view
+        name: isAnyNonceClaimed
+        inputs:
+          - { name: user, type: address }
+          - { name: token, type: address }
+          - { name: epoch, type: uint64 }
+          - { name: nonceMask, type: uint256 }
+        outputs: [{ name: "", type: bool }]
+      - type: function
+        stateMutability: view
+        name: claimedBitmaps
+        inputs:
+          - { name: user, type: address }
+          - { name: token, type: address }
+          - { name: epoch, type: uint64 }
+        outputs: [{ name: "", type: uint256 }]
+      - type: event
+        name: RewardManagerUpdated
+        inputs:
+          - { name: oldManager, type: address, indexed: true }
+          - { name: newManager, type: address, indexed: true }
+        anonymous: false
+      - type: event
+        name: Claimed
+        inputs:
+          - { name: user, type: address, indexed: true }
+          - { name: token, type: address, indexed: true }
+          - { name: amount, type: uint256, indexed: false }
+          - { name: epoch, type: uint64, indexed: false }
+          - { name: nonceMask, type: uint256, indexed: false }
+        anonymous: false
+      - type: event
+        name: Withdrawn
+        inputs:
+          - { name: token, type: address, indexed: true }
+          - { name: to, type: address, indexed: true }
+          - { name: amount, type: uint256, indexed: false }
+        anonymous: false
