@@ -12,6 +12,35 @@ info:
     - Certain response field names are capitalized because they are serialized directly from Go struct fields
       (e.g., objects inside `claims` and `ready` arrays).
 
+    ### How to claim rewards (frontend step‑by‑step)
+    1. **Fetch claim bundles** for the user:
+       - `GET /v1/rewards/claimable/{addr}`
+       - Response contains `claims[]` with `{Epoch, Amount, NonceMask, Signature}`.
+       - **Token** is USDC (see `x-deployed-contracts.USDC` below).
+    2. **For each claim bundle**, call the Distributor contract from the user's wallet:
+       - Contract: `WeeklyRewardsDistributor` at `x-deployed-contracts.WeeklyRewardsDistributor`
+       - Method: `claim(address token, uint256 amount, uint64 epoch, uint256 nonceMask, bytes signature)`
+       - Parameters (per bundle item):
+         - `token` = `x-deployed-contracts.USDC`
+         - `amount` = `claims[i].Amount` (decimal string, 18 decimals)
+         - `epoch` = `claims[i].Epoch`
+         - `nonceMask` = `claims[i].NonceMask`
+         - `signature` = `claims[i].Signature`
+       - Network: **BSC mainnet**, Chain ID **56**
+    3. **UI tips**:
+       - Display the total of `Amount` (converted to USD) across bundles for convenience.
+       - You may let the user submit multiple `claim` transactions (one per epoch bundle).
+
+  x-deployed-contracts:
+    network: BSC Mainnet
+    chainId: 56
+    # These values mirror the stack defaults/templates you provided.
+    # If your deployment uses different addresses, update here for the FE.
+    USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
+    USDy: "0xeC70017859873BCCB88570240e1640e34F8b4187"
+    USDyVault: "0x0D880afcc3f62853a9aE9911D3488859c33EE84D"
+    WeeklyRewardsDistributor: "0x5373ADce7012b2C2a5AAAFeF5cf416Fa99b642E8"
+
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -35,7 +64,7 @@ paths:
       summary: Health check
       operationId: health
       responses:
-        '200':
+        "200":
           description: Service is healthy
           content:
             text/plain:
@@ -56,7 +85,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegisterRequest'
+              $ref: "#/components/schemas/RegisterRequest"
             examples:
               basic:
                 value:
@@ -66,18 +95,18 @@ paths:
                   address: "0x2222222222222222222222222222222222222222"
                   inviteCode: "9f3a6c1d"
       responses:
-        '200':
+        "200":
           description: Registered
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RegisterResponse'
+                $ref: "#/components/schemas/RegisterResponse"
               example: { ok: true }
-        '400':
+        "400":
           description: Bad request (e.g., invalid JSON or DB validation error)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/invite/{addr}:
     get:
@@ -88,22 +117,22 @@ paths:
         The current implementation uses the last 8 hex characters of the address as the invite code.
       operationId: getInviteCode
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
       responses:
-        '200':
+        "200":
           description: Invite code for the address
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InviteCodeResponse'
+                $ref: "#/components/schemas/InviteCodeResponse"
               example:
                 address: "0xabc000000000000000000000000000000000cdef"
                 inviteCode: "0000cdef"
-        '500':
+        "500":
           description: Server error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/user/{addr}/summary:
     get:
@@ -114,14 +143,14 @@ paths:
         and infers level + rakeback percentages from points.
       operationId: userSummary
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
       responses:
-        '200':
+        "200":
           description: Summary computed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserSummary'
+                $ref: "#/components/schemas/UserSummary"
               example:
                 address: "0x1111111111111111111111111111111111111111"
                 level: 2
@@ -134,21 +163,25 @@ paths:
     get:
       tags: [Users]
       summary: Network counts for a user
-      description: Number of children and grandchildren; plus distinct downline addresses with non‑zero all‑time trading volume.
+      description: |
+        Number of children and grandchildren; plus:
+        - `active_traders_among_children_and_grandchildren`: distinct downline addresses with non‑zero all‑time trading volume
+        - `downline_total_perp_volume_usd`: total all‑time perp trading volume from children and grandchildren
       operationId: userNetwork
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
       responses:
-        '200':
+        "200":
           description: Network stats
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserNetwork'
+                $ref: "#/components/schemas/UserNetwork"
               example:
                 children: 12
                 grandchildren: 28
                 active_traders_among_children_and_grandchildren: 15
+                downline_total_perp_volume_usd: 123456.78
 
   /v1/user/{addr}/rewards:
     get:
@@ -160,14 +193,14 @@ paths:
         this call grants a one‑time 1000 miles bonus and marks it as granted in the DB.
       operationId: userRewards
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
       responses:
-        '200':
+        "200":
           description: Reward and miles overview
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserRewards'
+                $ref: "#/components/schemas/UserRewards"
               example:
                 address: "0x1111111111111111111111111111111111111111"
                 miles: 1234
@@ -177,25 +210,52 @@ paths:
   /v1/user/{addr}/affiliations:
     get:
       tags: [Users]
-      summary: Affiliation activity (placeholder)
+      summary: Per‑affiliate activity & attributions
       description: |
-        **Current implementation is placeholder** and returns only a `note` field.
-        Future versions will return a paginated breakdown per affiliate and action type.
+        Returns a **paginated** list where each affiliate can appear **up to two times**:
+        one `"trade"` row and one `"stake"` row.  
+        For each row:
+        - `address`: the affiliate's EVM address
+        - `affiliation_type`: `"children"` or `"grandchildren"`
+        - `joined_at`: when the affiliate joined the system
+        - `action_type`: `"trade"` or `"stake"`
+        - `miles_earned`: miles the referrer earned **because of this affiliate** for this action
+        - `reward_earned_usd`: rewards (USD) the referrer earned **because of this affiliate**  
+          (non‑zero only for `"stake"`, as trading by affiliates does not pay referrer rewards in the current model)
       operationId: userAffiliations
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
       responses:
-        '200':
-          description: Placeholder response
+        "200":
+          description: Paginated affiliate rows
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  note:
-                    type: string
+                $ref: "#/components/schemas/UserAffiliationsResponse"
               example:
-                note: "See repository version for full implementation including miles & reward_from_this breakdown"
+                address: "0x1111111111111111111111111111111111111111"
+                page: 1
+                page_size: 2
+                total: 2
+                items:
+                  - address: "0xaaaa00000000000000000000000000000000bbbb"
+                    affiliation_type: "children"
+                    joined_at: "2025-08-01T00:00:00Z"
+                    action_type: "trade"
+                    miles_earned: 12.34
+                    reward_earned_usd: 0
+                  - address: "0xaaaa00000000000000000000000000000000bbbb"
+                    affiliation_type: "children"
+                    joined_at: "2025-08-01T00:00:00Z"
+                    action_type: "stake"
+                    miles_earned: 3.21
+                    reward_earned_usd: 0.45
 
   /v1/rewards/claimable/{addr}:
     get:
@@ -207,18 +267,17 @@ paths:
         - **Token**: USDC (address from server config).
         - **Amount**: Decimal string, 18‑decimals (1e18 per USD).
         - **NonceMask**: Hex bitmask (e.g., `0x3`) for weeks in that epoch.
-        - **Signature**: 65‑byte ECDSA (0x‑prefixed). Typed data domain:
-          `EIP712Domain(name="WeeklyRewardsDistributor", version="1", chainId, verifyingContract)`.
+        - **Signature**: 65‑byte ECDSA (0x‑prefixed) over `Claim(user, token, amount, epoch, nonceMask)`.
       operationId: claimableRewards
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
       responses:
-        '200':
+        "200":
           description: Claim bundles for the address
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClaimableResponse'
+                $ref: "#/components/schemas/ClaimableResponse"
               example:
                 address: "0x1111111111111111111111111111111111111111"
                 claims:
@@ -226,11 +285,11 @@ paths:
                     Amount: "1500000000000000000"
                     NonceMask: "0x3"
                     Signature: "0x8b5e0a...c9"
-        '500':
+        "500":
           description: Server error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/rewards/claim:
     post:
@@ -245,21 +304,21 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SignClaimRequest' }
+            schema: { $ref: "#/components/schemas/SignClaimRequest" }
             example:
               address: "0x1111111111111111111111111111111111111111"
               epoch: 123
       responses:
-        '200':
+        "200":
           description: Claim bundles for the address (same shape as GET /claimable)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ClaimableResponse' }
-        '400':
+              schema: { $ref: "#/components/schemas/ClaimableResponse" }
+        "400":
           description: Bad request (invalid JSON)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/redeems/{addr}:
     get:
@@ -270,14 +329,14 @@ paths:
         and `available_at <= now` (ordered by `available_at` ascending).
       operationId: redeemsReady
       parameters:
-        - $ref: '#/components/parameters/AddrPath'
+        - $ref: "#/components/parameters/AddrPath"
       responses:
-        '200':
+        "200":
           description: Redeem requests ready to claim
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RedeemsReadyResponse'
+                $ref: "#/components/schemas/RedeemsReadyResponse"
               example:
                 ready:
                   - ID: 12
@@ -304,7 +363,7 @@ components:
         EVM address. Case-insensitive; normalized to lowercase on the server.
       schema:
         type: string
-        pattern: '^0x[0-9a-fA-F]{40}$'
+        pattern: "^0x[0-9a-fA-F]{40}$"
         example: "0x1111111111111111111111111111111111111111"
 
   schemas:
@@ -321,7 +380,7 @@ components:
       required: [address]
       properties:
         address:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         inviteCode:
           type: string
           description: Invite code obtained from an inviter.
@@ -340,7 +399,7 @@ components:
       required: [address, inviteCode]
       properties:
         address:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         inviteCode:
           type: string
           description: Deterministic code (currently last 8 hex chars of the address).
@@ -357,7 +416,7 @@ components:
         - grandchildren_staking_rakeback_percent
       properties:
         address:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         level:
           type: integer
           minimum: 1
@@ -380,7 +439,13 @@ components:
 
     UserNetwork:
       type: object
-      required: [children, grandchildren, active_traders_among_children_and_grandchildren]
+      required:
+        [
+          children,
+          grandchildren,
+          active_traders_among_children_and_grandchildren,
+          downline_total_perp_volume_usd,
+        ]
       properties:
         children:
           type: integer
@@ -391,13 +456,17 @@ components:
         active_traders_among_children_and_grandchildren:
           type: integer
           format: int64
+        downline_total_perp_volume_usd:
+          type: number
+          format: double
+          description: Total all‑time perp trading volume from children and grandchildren.
 
     UserRewards:
       type: object
       required: [address, miles, total_reward, reward_to_be_claimed]
       properties:
         address:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         miles:
           type: number
           format: double
@@ -410,16 +479,71 @@ components:
           format: double
           description: Unclaimed rewards in USD.
 
+    # ---- Affiliations ----
+    UserAffiliationsResponse:
+      type: object
+      required: [address, page, page_size, total, items]
+      properties:
+        address:
+          $ref: "#/components/schemas/Address"
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 500
+        total:
+          type: integer
+          minimum: 0
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AffiliationItem"
+
+    AffiliationItem:
+      type: object
+      required:
+        [
+          address,
+          affiliation_type,
+          joined_at,
+          action_type,
+          miles_earned,
+          reward_earned_usd,
+        ]
+      properties:
+        address:
+          $ref: "#/components/schemas/Address"
+        affiliation_type:
+          type: string
+          enum: [children, grandchildren]
+        joined_at:
+          type: string
+          format: date-time
+        action_type:
+          type: string
+          enum: [trade, stake]
+        miles_earned:
+          type: number
+          format: double
+          description: Miles the referrer earned due to this affiliate for this action.
+        reward_earned_usd:
+          type: number
+          format: double
+          description: |
+            Rewards (USD) the referrer earned due to this affiliate. Non‑zero for `"stake"` rows only.
+
     ClaimableResponse:
       type: object
       required: [address, claims]
       properties:
         address:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         claims:
           type: array
           items:
-            $ref: '#/components/schemas/ClaimBundle'
+            $ref: "#/components/schemas/ClaimBundle"
       description: |
         `claims` contains one entry per epoch with a signature that authorizes claiming
         all unclaimed week-bits represented by `NonceMask`.
@@ -438,17 +562,17 @@ components:
           description: |
             Decimal string representing 18‑decimal units (wei-like) for USD amount.
             Example: "1500000000000000000" == $1.5
-          pattern: '^[0-9]+$'
+          pattern: "^[0-9]+$"
           example: "1500000000000000000"
         NonceMask:
           type: string
           description: Hex bitmask for weeks within the epoch.
-          pattern: '^0x[0-9a-fA-F]+$'
+          pattern: "^0x[0-9a-fA-F]+$"
           example: "0x3"
         Signature:
           type: string
           description: 65‑byte ECDSA signature (0x‑prefixed) over EIP‑712 typed data.
-          pattern: '^0x[0-9a-fA-F]+$'
+          pattern: "^0x[0-9a-fA-F]+$"
           example: "0x8b5e0a...c9"
 
     SignClaimRequest:
@@ -456,7 +580,7 @@ components:
       required: [address]
       properties:
         address:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         epoch:
           type: integer
           format: int64
@@ -471,14 +595,14 @@ components:
         ready:
           type: array
           items:
-            $ref: '#/components/schemas/RedeemRequestRow'
+            $ref: "#/components/schemas/RedeemRequestRow"
 
     RedeemRequestRow:
       type: object
       description: Row serialized directly from the database (Go struct field names are capitalized).
       properties:
         ID: { type: integer, format: int64 }
-        Account: { $ref: '#/components/schemas/Address' }
+        Account: { $ref: "#/components/schemas/Address" }
         RequestID: { type: integer, format: int64 }
         Stablecoin:
           type: string
@@ -487,7 +611,7 @@ components:
           type: number
           format: double
         Recipient:
-          $ref: '#/components/schemas/Address'
+          $ref: "#/components/schemas/Address"
         AvailableAt:
           type: string
           format: date-time
@@ -509,7 +633,7 @@ components:
 
     Address:
       type: string
-      pattern: '^0x[0-9a-fA-F]{40}$'
+      pattern: "^0x[0-9a-fA-F]{40}$"
       example: "0x1111111111111111111111111111111111111111"
 
-security: []  # no auth at the API layer
+security: [] # no auth at the API layer
