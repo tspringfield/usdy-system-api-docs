@@ -12,20 +12,22 @@ info:
     - Certain response field names are capitalized because they are serialized directly from Go struct fields
       (e.g., objects inside `claims` and `ready` arrays).
 
-    ### How to claim rewards (frontend step‑by‑step)
-    1. **Fetch claim bundles** for the user:
-       - `GET /v1/rewards/claimable/{addr}`
-       - Response contains `claims[]` with `{Epoch, Amount, NonceMask, Signature}`.
+    ### How to claim rewards (frontend step-by-step)
+    1. **Fetch claim bundles** per reward kind:
+       - **Rakebacks (`kind = 0`)**: `GET /v1/rewards/rakeback/claimable/{addr}` (or `POST /v1/rewards/rakeback/claim` for a single epoch).
+       - **Post-rake staking (`kind = 1`)**: `GET /v1/rewards/staking/claimable/{addr}` (or `POST /v1/rewards/staking/claim`).
+       - Each response includes `kind` and `claims[]` with `{epoch, amount, nonceMask, signature}` (amount is a decimal string with 18 decimals; `nonceMask` is a hex bitmap).
        - **Token** is USDC (see `x-deployed-contracts.USDC` below).
     2. **For each claim bundle**, call the Distributor contract from the user's wallet:
        - Contract: `WeeklyRewardsDistributor` at `x-deployed-contracts.WeeklyRewardsDistributor`
-       - Method: `claim(address token, uint256 amount, uint64 epoch, uint256 nonceMask, bytes signature)`
+       - Method: `claim(address token, uint256 amount, uint64 epoch, uint256 nonceMask, uint8 kind, bytes signature)`
        - Parameters (per bundle item):
          - `token` = `x-deployed-contracts.USDC`
-         - `amount` = `claims[i].Amount` (decimal string, 18 decimals)
-         - `epoch` = `claims[i].Epoch`
-         - `nonceMask` = `claims[i].NonceMask`
-         - `signature` = `claims[i].Signature`
+         - `amount` = `claims[i].amount` (decimal string, 18 decimals)
+         - `epoch` = `claims[i].epoch`
+         - `nonceMask` = `claims[i].nonceMask`
+         - `kind` = `kind` from the API response (`0` = rakebacks, `1` = post-rake staking)
+         - `signature` = `claims[i].signature`
        - Network: **BSC mainnet**, Chain ID **56**
     3. **UI tips**:
        - Display the total of `Amount` (converted to USD) across bundles for convenience.
@@ -207,6 +209,29 @@ paths:
                 total_reward: 456.78
                 reward_to_be_claimed: 12.34
 
+  /v1/user/{addr}/staking-rewards:
+    get:
+      tags: [Users]
+      summary: Post-rake staking reward summary for a user
+      description: |
+        Returns lifetime, year-to-date, and currently claimable **post-rake staking rewards** for the user.
+        All values are denominated in USD.
+      operationId: userStakingRewards
+      parameters:
+        - $ref: "#/components/parameters/AddrPath"
+      responses:
+        "200":
+          description: Staking reward summary in USD
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserStakingRewards"
+              example:
+                address: "0x1111111111111111111111111111111111111111"
+                lifetime_staking_reward: 345.67
+                ytd_staking_reward: 89.01
+                staking_reward_to_be_claimed: 12.34
+
   /v1/user/{addr}/affiliations:
     get:
       tags: [Users]
@@ -257,49 +282,79 @@ paths:
                     miles_earned: 3.21
                     reward_earned_usd: 0.45
 
-  /v1/rewards/claimable/{addr}:
+  /v1/rewards/rakeback/claimable/{addr}:
     get:
       tags: [Rewards]
-      summary: Get claimable reward signatures for a user (grouped per epoch)
+      summary: Claimable rakeback reward bundles for a user (kind = 0)
       description: |
-        Aggregates unclaimed `reward_bits` per epoch and returns one EIP‑712 signature per epoch,
-        covering all unclaimed week bits via `NonceMask`.
+        Aggregates unclaimed rakeback `reward_bits` per epoch for the address (`kind = 0`) and returns
+        one EIP‑712 signature per epoch that covers all unclaimed week bits via `nonceMask`.
         - **Token**: USDC (address from server config).
-        - **Amount**: Decimal string, 18‑decimals (1e18 per USD).
-        - **NonceMask**: Hex bitmask (e.g., `0x3`) for weeks in that epoch.
-        - **Signature**: 65‑byte ECDSA (0x‑prefixed) over `Claim(user, token, amount, epoch, nonceMask)`.
-      operationId: claimableRewards
+        - **Amount**: Decimal string, 18 decimals (1e18 per USD).
+        - **nonceMask**: Hex bitmask (e.g., `0x3`) for the weeks in that epoch.
+        - **signature**: 65‑byte ECDSA (0x‑prefixed) over `Claim(user, token, amount, epoch, nonceMask, kind)`.
+      operationId: claimableRakebacks
       parameters:
         - $ref: "#/components/parameters/AddrPath"
       responses:
         "200":
-          description: Claim bundles for the address
+          description: Claim bundles for rakeback rewards
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClaimableResponse"
               example:
                 address: "0x1111111111111111111111111111111111111111"
+                kind: 0
                 claims:
-                  - Epoch: 123
-                    Amount: "1500000000000000000"
-                    NonceMask: "0x3"
-                    Signature: "0x8b5e0a...c9"
+                  - epoch: 123
+                    amount: "1500000000000000000"
+                    nonceMask: "0x3"
+                    signature: "0x8b5e0a...c9"
         "500":
           description: Server error
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /v1/rewards/claim:
+  /v1/rewards/staking/claimable/{addr}:
+    get:
+      tags: [Rewards]
+      summary: Claimable post-rake staking reward bundles for a user (kind = 1)
+      description: |
+        Same as the rakeback endpoint but limited to post-rake staking rewards (`kind = 1`).
+      operationId: claimableStaking
+      parameters:
+        - $ref: "#/components/parameters/AddrPath"
+      responses:
+        "200":
+          description: Claim bundles for post-rake staking rewards
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimableResponse"
+              example:
+                address: "0x1111111111111111111111111111111111111111"
+                kind: 1
+                claims:
+                  - epoch: 456
+                    amount: "420000000000000000"
+                    nonceMask: "0x7"
+                    signature: "0xd1ce5f...42"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/rewards/rakeback/claim:
     post:
       tags: [Rewards]
-      summary: Get claim signature(s) via POST body
+      summary: Request a rakeback claim signature for a specific epoch
       description: |
-        Accepts JSON `{address, epoch}` and returns the same structure as `/v1/rewards/claimable/{addr}`.
-        **Note:** As implemented, the `epoch` field is currently ignored and all claimable epochs
-        for the `address` are returned.
-      operationId: signClaim
+        Accepts JSON `{address, epoch}` and returns the aggregated claim payload for that epoch
+        for rakeback rewards (`kind = 0`).
+      operationId: signClaimRakebacks
       requestBody:
         required: true
         content:
@@ -310,10 +365,51 @@ paths:
               epoch: 123
       responses:
         "200":
-          description: Claim bundles for the address (same shape as GET /claimable)
+          description: Aggregated claim payload
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ClaimableResponse" }
+              schema: { $ref: "#/components/schemas/SignClaimResponse" }
+              example:
+                address: "0x1111111111111111111111111111111111111111"
+                kind: 0
+                epoch: 123
+                amount: "1500000000000000000"
+                nonceMask: "0x3"
+                signature: "0x8b5e0a...c9"
+        "400":
+          description: Bad request (invalid JSON)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/rewards/staking/claim:
+    post:
+      tags: [Rewards]
+      summary: Request a post-rake staking claim signature for a specific epoch
+      description: |
+        Same request body as the rakeback variant, but returns a payload for post-rake staking rewards (`kind = 1`).
+      operationId: signClaimStaking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignClaimRequest" }
+            example:
+              address: "0x1111111111111111111111111111111111111111"
+              epoch: 456
+      responses:
+        "200":
+          description: Aggregated claim payload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignClaimResponse" }
+              example:
+                address: "0x1111111111111111111111111111111111111111"
+                kind: 1
+                epoch: 456
+                amount: "420000000000000000"
+                nonceMask: "0x7"
+                signature: "0xd1ce5f...42"
         "400":
           description: Bad request (invalid JSON)
           content:
@@ -479,6 +575,28 @@ components:
           format: double
           description: Unclaimed rewards in USD.
 
+    UserStakingRewards:
+      type: object
+      required:
+        [
+          address,
+          lifetime_staking_reward,
+          ytd_staking_reward,
+          staking_reward_to_be_claimed,
+        ]
+      properties:
+        address:
+          $ref: "#/components/schemas/Address"
+        lifetime_staking_reward:
+          type: number
+          format: double
+        ytd_staking_reward:
+          type: number
+          format: double
+        staking_reward_to_be_claimed:
+          type: number
+          format: double
+
     # ---- Affiliations ----
     UserAffiliationsResponse:
       type: object
@@ -536,40 +654,42 @@ components:
 
     ClaimableResponse:
       type: object
-      required: [address, claims]
+      required: [address, kind, claims]
       properties:
         address:
           $ref: "#/components/schemas/Address"
+        kind:
+          $ref: "#/components/schemas/RewardKind"
         claims:
           type: array
           items:
             $ref: "#/components/schemas/ClaimBundle"
       description: |
         `claims` contains one entry per epoch with a signature that authorizes claiming
-        all unclaimed week-bits represented by `NonceMask`.
+        all unclaimed week-bits represented by `nonceMask` for the specified reward `kind`.
 
     ClaimBundle:
       type: object
-      required: [Epoch, Amount, NonceMask, Signature]
+      required: [epoch, amount, nonceMask, signature]
       properties:
-        Epoch:
+        epoch:
           type: integer
           format: int64
           description: Epoch index (uint64).
           example: 123
-        Amount:
+        amount:
           type: string
           description: |
             Decimal string representing 18‑decimal units (wei-like) for USD amount.
             Example: "1500000000000000000" == $1.5
           pattern: "^[0-9]+$"
           example: "1500000000000000000"
-        NonceMask:
+        nonceMask:
           type: string
           description: Hex bitmask for weeks within the epoch.
           pattern: "^0x[0-9a-fA-F]+$"
           example: "0x3"
-        Signature:
+        signature:
           type: string
           description: 65‑byte ECDSA signature (0x‑prefixed) over EIP‑712 typed data.
           pattern: "^0x[0-9a-fA-F]+$"
@@ -577,16 +697,37 @@ components:
 
     SignClaimRequest:
       type: object
-      required: [address]
+      required: [address, epoch]
       properties:
         address:
           $ref: "#/components/schemas/Address"
         epoch:
           type: integer
           format: int64
-          description: |
-            Intended epoch to sign (currently ignored; server returns all claimable epochs).
+          description: Epoch to aggregate/signed claim for.
       additionalProperties: false
+
+    SignClaimResponse:
+      type: object
+      required: [address, kind, epoch, amount, nonceMask, signature]
+      properties:
+        address:
+          $ref: "#/components/schemas/Address"
+        kind:
+          $ref: "#/components/schemas/RewardKind"
+        epoch:
+          type: integer
+          format: int64
+        amount:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Decimal string with 18 decimals (wei-like).
+        nonceMask:
+          type: string
+          pattern: "^0x[0-9a-fA-F]+$"
+        signature:
+          type: string
+          pattern: "^0x[0-9a-fA-F]+$"
 
     RedeemsReadyResponse:
       type: object
@@ -635,5 +776,12 @@ components:
       type: string
       pattern: "^0x[0-9a-fA-F]{40}$"
       example: "0x1111111111111111111111111111111111111111"
+
+    RewardKind:
+      type: integer
+      enum: [0, 1]
+      description: |
+        `0` = Rakebacks (broker-fee + affiliate staking reward rakebacks).  
+        `1` = Post-rake staking rewards (user's own).
 
 security: [] # no auth at the API layer
