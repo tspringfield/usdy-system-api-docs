@@ -110,6 +110,61 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/user/{addr}/bind-parent:
+    post:
+      tags: [Registration & Invites]
+      summary: Bind a parent for an existing user
+      description: |
+        Allows a user who registered without an invite code to bind exactly one parent later.
+        Once a parent is set (during registration or via this endpoint) it cannot be changed.
+        The server also rejects bindings that would create ancestry cycles.
+      operationId: bindParent
+      parameters:
+        - $ref: "#/components/parameters/AddrPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindParentRequest"
+            example:
+              inviteCode: "9f3a6c1d"
+      responses:
+        "200":
+          description: Parent bound
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+              example: { ok: true }
+        "400":
+          description: Invite code missing/invalid or parent already set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                inviteRequired:
+                  value: { error: "invite code required" }
+                invalidInvite:
+                  value: { error: "invalid invite code" }
+                parentBound:
+                  value: { error: "parent already bound" }
+                cycle:
+                  value: { error: "binding would create cycle" }
+                selfBind:
+                  value: { error: "cannot bind yourself as parent" }
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "user not found" }
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/invite/{addr}:
     get:
       tags: [Registration & Invites]
@@ -489,6 +544,17 @@ components:
       properties:
         ok:
           type: boolean
+
+    BindParentRequest:
+      type: object
+      required: [inviteCode]
+      properties:
+        inviteCode:
+          type: string
+          description: Invite code issued by the desired parent.
+          minLength: 1
+          maxLength: 16
+      additionalProperties: false
 
     InviteCodeResponse:
       type: object
