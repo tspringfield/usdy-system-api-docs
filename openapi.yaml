@@ -191,6 +191,48 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/user/{addr}/parent-invite:
+    get:
+      tags: [Registration & Invites]
+      summary: Get the parent invite code for an address
+      description: |
+        Returns the parent that the address bound to (if any) along with the invite code that was used.
+      operationId: getParentInviteCode
+      parameters:
+        - $ref: "#/components/parameters/AddrPath"
+      responses:
+        "200":
+          description: Parent info (nullable if not yet bound)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParentInviteResponse"
+              examples:
+                bound:
+                  summary: Parent already bound
+                  value:
+                    address: "0xabc000000000000000000000000000000000cdef"
+                    parentBound: true
+                    parentAddress: "0x1111111111111111111111111111111111111111"
+                    parentInviteCode: "parent12"
+                unbound:
+                  summary: No parent yet
+                  value:
+                    address: "0x123000000000000000000000000000000000abcd"
+                    parentBound: false
+                    parentAddress: null
+                    parentInviteCode: null
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /v1/user/{addr}/summary:
     get:
       tags: [Users]
@@ -474,34 +516,44 @@ paths:
   /v1/redeems/{addr}:
     get:
       tags: [Redeems]
-      summary: List ready-to-claim vault redeems for an address
+      summary: List vault redeems (ready + pending) for an address
       description: |
-        Returns pending/ready redemption requests for the given account where `claimed=false`
-        and `available_at <= now` (ordered by `available_at` ascending).
+        Returns all unclaimed redemption requests for the given account (ordered by `ready_at`
+        ascending). Each item includes its readiness status and the timestamp when it becomes
+        claimable.
       operationId: redeemsReady
       parameters:
         - $ref: "#/components/parameters/AddrPath"
       responses:
         "200":
-          description: Redeem requests ready to claim
+          description: Redeem requests that are ready now or still pending
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/RedeemsReadyResponse"
               example:
-                ready:
-                  - ID: 12
-                    Account: "0x1111111111111111111111111111111111111111"
-                    RequestID: 7
-                    Stablecoin: "USDC"
-                    AmountUSD: 100.0
-                    Recipient: "0x2222222222222222222222222222222222222222"
-                    AvailableAt: "2025-10-01T12:34:56Z"
-                    Claimed: false
-                    ClaimTx: null
-                    BlockNum: 41234567
-                    CreatedAt: "2025-09-24T12:34:56Z"
-                    UpdatedAt: "2025-09-24T12:34:56Z"
+                address: "0x1111111111111111111111111111111111111111"
+                items:
+                  - id: 12
+                    request_id: 7
+                    stablecoin: "USDC"
+                    amount_usd: 100.0
+                    recipient: "0x2222222222222222222222222222222222222222"
+                    ready_at: "2025-10-01T12:34:56Z"
+                    status: ready
+                    block_num: 41234567
+                    created_at: "2025-09-24T12:34:56Z"
+                    updated_at: "2025-09-24T12:34:56Z"
+                  - id: 13
+                    request_id: 8
+                    stablecoin: "USDT"
+                    amount_usd: 150.0
+                    recipient: "0x3333333333333333333333333333333333333333"
+                    ready_at: "2025-10-05T12:34:56Z"
+                    status: pending
+                    block_num: 41234600
+                    created_at: "2025-09-28T12:34:56Z"
+                    updated_at: "2025-09-28T12:34:56Z"
 
 components:
   securitySchemes: {}
@@ -566,6 +618,23 @@ components:
           type: string
           description: Deterministic code (currently last 8 hex chars of the address).
           example: "0000cdef"
+
+    ParentInviteResponse:
+      type: object
+      required: [address, parentBound]
+      properties:
+        address:
+          $ref: "#/components/schemas/Address"
+        parentBound:
+          type: boolean
+        parentAddress:
+          allOf:
+            - $ref: "#/components/schemas/Address"
+          nullable: true
+        parentInviteCode:
+          type: string
+          nullable: true
+          description: Invite code belonging to the bound parent (null when no parent yet).
 
     UserSummary:
       type: object
@@ -797,44 +866,45 @@ components:
 
     RedeemsReadyResponse:
       type: object
-      required: [ready]
+      required: [address, items]
       properties:
-        ready:
+        address:
+          $ref: "#/components/schemas/Address"
+        items:
           type: array
           items:
-            $ref: "#/components/schemas/RedeemRequestRow"
+            $ref: "#/components/schemas/RedeemEntry"
 
-    RedeemRequestRow:
+    RedeemEntry:
       type: object
-      description: Row serialized directly from the database (Go struct field names are capitalized).
+      description: Vault redeem request that is either ready to claim now or pending until its ready_at timestamp.
+      required:
+        [id, request_id, stablecoin, amount_usd, recipient, ready_at, status, block_num, created_at, updated_at]
       properties:
-        ID: { type: integer, format: int64 }
-        Account: { $ref: "#/components/schemas/Address" }
-        RequestID: { type: integer, format: int64 }
-        Stablecoin:
+        id: { type: integer, format: int64 }
+        request_id: { type: integer, format: int64 }
+        stablecoin:
           type: string
           enum: [USDT, USDC]
-        AmountUSD:
+        amount_usd:
           type: number
           format: double
-        Recipient:
+        recipient:
           $ref: "#/components/schemas/Address"
-        AvailableAt:
+        ready_at:
           type: string
           format: date-time
-        Claimed:
-          type: boolean
-        ClaimTx:
+          description: Timestamp when the redeem becomes claimable.
+        status:
           type: string
-          nullable: true
-          description: Transaction hash if claimed.
-        BlockNum:
+          enum: [ready, pending]
+        block_num:
           type: integer
           format: int64
-        CreatedAt:
+        created_at:
           type: string
           format: date-time
-        UpdatedAt:
+        updated_at:
           type: string
           format: date-time
 
