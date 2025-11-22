@@ -1,923 +1,783 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: USDy System API
-  version: 0.1.0-dev
-  description: |
-    Public HTTP API for the USDy system. Implemented with Gin (Go).
-
-    ### Notes
-    - All addresses are normalized to lowercase on the server.
-    - No authentication is enforced by the API layer (the stack typically limits ingress at the ALB / network level).
-    - Some GET endpoints have side-effects (see `/v1/user/{addr}/rewards`).
-    - Certain response field names are capitalized because they are serialized directly from Go struct fields
-      (e.g., objects inside `claims` and `ready` arrays).
-
-    ### How to claim rewards (frontend step-by-step)
-    1. **Fetch claim bundles** per reward kind:
-       - **Rakebacks (`kind = 0`)**: `GET /v1/rewards/rakeback/claimable/{addr}` (or `POST /v1/rewards/rakeback/claim` for a single epoch).
-       - **Post-rake staking (`kind = 1`)**: `GET /v1/rewards/staking/claimable/{addr}` (or `POST /v1/rewards/staking/claim`).
-       - Each response includes `kind` and `claims[]` with `{epoch, amount, nonceMask, signature}` (amount is a decimal string with 18 decimals; `nonceMask` is a hex bitmap).
-       - **Token** is USDC (see `x-deployed-contracts.USDC` below).
-    2. **For each claim bundle**, call the Distributor contract from the user's wallet:
-       - Contract: `WeeklyRewardsDistributor` at `x-deployed-contracts.WeeklyRewardsDistributor`
-       - Method: `claim(address token, uint256 amount, uint64 epoch, uint256 nonceMask, uint8 kind, bytes signature)`
-       - Parameters (per bundle item):
-         - `token` = `x-deployed-contracts.USDC`
-         - `amount` = `claims[i].amount` (decimal string, 18 decimals)
-         - `epoch` = `claims[i].epoch`
-         - `nonceMask` = `claims[i].nonceMask`
-         - `kind` = `kind` from the API response (`0` = rakebacks, `1` = post-rake staking)
-         - `signature` = `claims[i].signature`
-       - Network: **BSC mainnet**, Chain ID **56**
-    3. **UI tips**:
-       - Display the total of `Amount` (converted to USD) across bundles for convenience.
-       - You may let the user submit multiple `claim` transactions (one per epoch bundle).
-
-  x-deployed-contracts:
-    network: BSC Mainnet
-    chainId: 56
-    # These values mirror the stack defaults/templates you provided.
-    # If your deployment uses different addresses, update here for the FE.
-    USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
-    USDy: "0xeC70017859873BCCB88570240e1640e34F8b4187"
-    USDyVault: "0x0D880afcc3f62853a9aE9911D3488859c33EE84D"
-    WeeklyRewardsDistributor: "0x5373ADce7012b2C2a5AAAFeF5cf416Fa99b642E8"
-
+  title: Linear Game Backend API
+  version: 1.0.0
 servers:
-  - url: http://localhost:8080
-    description: Local development
-  - url: https://{alb_dns}
-    description: Deployed behind AWS ALB (dev stack)
-    variables:
-      alb_dns:
-        default: example-alb-123.ap-southeast-1.elb.amazonaws.com
-
-tags:
-  - name: Health
-  - name: Registration & Invites
-  - name: Users
-  - name: Rewards
-  - name: Redeems
-
-paths:
-  /health:
-    get:
-      tags: [Health]
-      summary: Health check
-      operationId: health
-      responses:
-        "200":
-          description: Service is healthy
-          content:
-            text/plain:
-              schema:
-                type: string
-              example: ok
-
-  /v1/register:
-    post:
-      tags: [Registration & Invites]
-      summary: Register a user (optionally using an invite code)
-      description: |
-        Creates a user row. If a valid `inviteCode` is provided, the inviter relationship (parent)
-        is recorded; depth-2 (grandparent) relation is also created if present.
-      operationId: register
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterRequest"
-            examples:
-              basic:
-                value:
-                  address: "0x1111111111111111111111111111111111111111"
-              withInvite:
-                value:
-                  address: "0x2222222222222222222222222222222222222222"
-                  inviteCode: "9f3a6c1d"
-      responses:
-        "200":
-          description: Registered
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RegisterResponse"
-              example: { ok: true }
-        "400":
-          description: Bad request (e.g., invalid JSON or DB validation error)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/user/{addr}/bind-parent:
-    post:
-      tags: [Registration & Invites]
-      summary: Bind a parent for an existing user
-      description: |
-        Allows a user who registered without an invite code to bind exactly one parent later.
-        Once a parent is set (during registration or via this endpoint) it cannot be changed.
-        The server also rejects bindings that would create ancestry cycles.
-      operationId: bindParent
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BindParentRequest"
-            example:
-              inviteCode: "9f3a6c1d"
-      responses:
-        "200":
-          description: Parent bound
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RegisterResponse"
-              example: { ok: true }
-        "400":
-          description: Invite code missing/invalid or parent already set
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-              examples:
-                inviteRequired:
-                  value: { error: "invite code required" }
-                invalidInvite:
-                  value: { error: "invalid invite code" }
-                parentBound:
-                  value: { error: "parent already bound" }
-                cycle:
-                  value: { error: "binding would create cycle" }
-                selfBind:
-                  value: { error: "cannot bind yourself as parent" }
-        "404":
-          description: User not found
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-              example: { error: "user not found" }
-        "500":
-          description: Server error
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/invite/{addr}:
-    get:
-      tags: [Registration & Invites]
-      summary: Get (or create) an invite code for an address
-      description: |
-        Idempotent. If the user does not exist yet, a user row is created with a deterministic invite code.
-        The current implementation uses the last 8 hex characters of the address as the invite code.
-      operationId: getInviteCode
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Invite code for the address
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InviteCodeResponse"
-              example:
-                address: "0xabc000000000000000000000000000000000cdef"
-                inviteCode: "0000cdef"
-        "500":
-          description: Server error
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/user/{addr}/parent-invite:
-    get:
-      tags: [Registration & Invites]
-      summary: Get the parent invite code for an address
-      description: |
-        Returns the parent that the address bound to (if any) along with the invite code that was used.
-      operationId: getParentInviteCode
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Parent info (nullable if not yet bound)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ParentInviteResponse"
-              examples:
-                bound:
-                  summary: Parent already bound
-                  value:
-                    address: "0xabc000000000000000000000000000000000cdef"
-                    parentBound: true
-                    parentAddress: "0x1111111111111111111111111111111111111111"
-                    parentInviteCode: "parent12"
-                unbound:
-                  summary: No parent yet
-                  value:
-                    address: "0x123000000000000000000000000000000000abcd"
-                    parentBound: false
-                    parentAddress: null
-                    parentInviteCode: null
-        "404":
-          description: User not found
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "500":
-          description: Server error
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/user/{addr}/summary:
-    get:
-      tags: [Users]
-      summary: Get a user's current level & points summary
-      description: |
-        Computes 30‑day points = `alpha * 30d_perp_volume + beta * 30d_avg_USDy_holding`
-        and infers level + rakeback percentages from points.
-      operationId: userSummary
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Summary computed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserSummary"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                level: 2
-                points: 145320.5
-                rakebackPercent: 0.05
-                children_staking_rakeback_percent: 0.12
-                grandchildren_staking_rakeback_percent: 0.06
-
-  /v1/user/{addr}/network:
-    get:
-      tags: [Users]
-      summary: Network counts for a user
-      description: |
-        Number of children and grandchildren; plus:
-        - `active_traders_among_children_and_grandchildren`: distinct downline addresses with non‑zero all‑time trading volume
-        - `downline_total_perp_volume_usd`: total all‑time perp trading volume from children and grandchildren
-      operationId: userNetwork
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Network stats
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserNetwork"
-              example:
-                children: 12
-                grandchildren: 28
-                active_traders_among_children_and_grandchildren: 15
-                downline_total_perp_volume_usd: 123456.78
-
-  /v1/user/{addr}/rewards:
-    get:
-      tags: [Users]
-      summary: Reward and miles overview for a user
-      description: |
-        Returns lifetime rewards (USD), unclaimed rewards (USD), and "miles".
-        **Side‑effect:** If the user's *self* trading + staking total (all‑time) first exceeds $10,
-        this call grants a one‑time 1000 miles bonus and marks it as granted in the DB.
-      operationId: userRewards
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Reward and miles overview
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserRewards"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                miles: 1234
-                total_reward: 456.78
-                reward_to_be_claimed: 12.34
-
-  /v1/user/{addr}/staking-rewards:
-    get:
-      tags: [Users]
-      summary: Post-rake staking reward summary for a user
-      description: |
-        Returns lifetime, year-to-date, and currently claimable **post-rake staking rewards** for the user.
-        All values are denominated in USD.
-      operationId: userStakingRewards
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Staking reward summary in USD
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserStakingRewards"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                lifetime_staking_reward: 345.67
-                ytd_staking_reward: 89.01
-                staking_reward_to_be_claimed: 12.34
-
-  /v1/user/{addr}/affiliations:
-    get:
-      tags: [Users]
-      summary: Per‑affiliate activity & attributions
-      description: |
-        Returns a **paginated** list where each affiliate can appear **up to two times**:
-        one `"trade"` row and one `"stake"` row.  
-        For each row:
-        - `address`: the affiliate's EVM address
-        - `affiliation_type`: `"children"` or `"grandchildren"`
-        - `joined_at`: when the affiliate joined the system
-        - `action_type`: `"trade"` or `"stake"`
-        - `miles_earned`: miles the referrer earned **because of this affiliate** for this action
-        - `reward_earned_usd`: rewards (USD) the referrer earned **because of this affiliate**  
-          (non‑zero only for `"stake"`, as trading by affiliates does not pay referrer rewards in the current model)
-      operationId: userAffiliations
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-        - in: query
-          name: page
-          schema: { type: integer, minimum: 1, default: 1 }
-        - in: query
-          name: page_size
-          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
-      responses:
-        "200":
-          description: Paginated affiliate rows
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserAffiliationsResponse"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                page: 1
-                page_size: 2
-                total: 2
-                items:
-                  - address: "0xaaaa00000000000000000000000000000000bbbb"
-                    affiliation_type: "children"
-                    joined_at: "2025-08-01T00:00:00Z"
-                    action_type: "trade"
-                    miles_earned: 12.34
-                    reward_earned_usd: 0
-                  - address: "0xaaaa00000000000000000000000000000000bbbb"
-                    affiliation_type: "children"
-                    joined_at: "2025-08-01T00:00:00Z"
-                    action_type: "stake"
-                    miles_earned: 3.21
-                    reward_earned_usd: 0.45
-
-  /v1/rewards/rakeback/claimable/{addr}:
-    get:
-      tags: [Rewards]
-      summary: Claimable rakeback reward bundles for a user (kind = 0)
-      description: |
-        Aggregates unclaimed rakeback `reward_bits` per epoch for the address (`kind = 0`) and returns
-        one EIP‑712 signature per epoch that covers all unclaimed week bits via `nonceMask`.
-        - **Token**: USDC (address from server config).
-        - **Amount**: Decimal string, 18 decimals (1e18 per USD).
-        - **nonceMask**: Hex bitmask (e.g., `0x3`) for the weeks in that epoch.
-        - **signature**: 65‑byte ECDSA (0x‑prefixed) over `Claim(user, token, amount, epoch, nonceMask, kind)`.
-      operationId: claimableRakebacks
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Claim bundles for rakeback rewards
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimableResponse"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                kind: 0
-                claims:
-                  - epoch: 123
-                    amount: "1500000000000000000"
-                    nonceMask: "0x3"
-                    signature: "0x8b5e0a...c9"
-        "500":
-          description: Server error
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/rewards/staking/claimable/{addr}:
-    get:
-      tags: [Rewards]
-      summary: Claimable post-rake staking reward bundles for a user (kind = 1)
-      description: |
-        Same as the rakeback endpoint but limited to post-rake staking rewards (`kind = 1`).
-      operationId: claimableStaking
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Claim bundles for post-rake staking rewards
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClaimableResponse"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                kind: 1
-                claims:
-                  - epoch: 456
-                    amount: "420000000000000000"
-                    nonceMask: "0x7"
-                    signature: "0xd1ce5f...42"
-        "500":
-          description: Server error
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/rewards/rakeback/claim:
-    post:
-      tags: [Rewards]
-      summary: Request a rakeback claim signature for a specific epoch
-      description: |
-        Accepts JSON `{address, epoch}` and returns the aggregated claim payload for that epoch
-        for rakeback rewards (`kind = 0`).
-      operationId: signClaimRakebacks
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SignClaimRequest" }
-            example:
-              address: "0x1111111111111111111111111111111111111111"
-              epoch: 123
-      responses:
-        "200":
-          description: Aggregated claim payload
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SignClaimResponse" }
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                kind: 0
-                epoch: 123
-                amount: "1500000000000000000"
-                nonceMask: "0x3"
-                signature: "0x8b5e0a...c9"
-        "400":
-          description: Bad request (invalid JSON)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/rewards/staking/claim:
-    post:
-      tags: [Rewards]
-      summary: Request a post-rake staking claim signature for a specific epoch
-      description: |
-        Same request body as the rakeback variant, but returns a payload for post-rake staking rewards (`kind = 1`).
-      operationId: signClaimStaking
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SignClaimRequest" }
-            example:
-              address: "0x1111111111111111111111111111111111111111"
-              epoch: 456
-      responses:
-        "200":
-          description: Aggregated claim payload
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SignClaimResponse" }
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                kind: 1
-                epoch: 456
-                amount: "420000000000000000"
-                nonceMask: "0x7"
-                signature: "0xd1ce5f...42"
-        "400":
-          description: Bad request (invalid JSON)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /v1/redeems/{addr}:
-    get:
-      tags: [Redeems]
-      summary: List vault redeems (ready + pending) for an address
-      description: |
-        Returns all unclaimed redemption requests for the given account (ordered by `ready_at`
-        ascending). Each item includes its readiness status and the timestamp when it becomes
-        claimable.
-      operationId: redeemsReady
-      parameters:
-        - $ref: "#/components/parameters/AddrPath"
-      responses:
-        "200":
-          description: Redeem requests that are ready now or still pending
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RedeemsReadyResponse"
-              example:
-                address: "0x1111111111111111111111111111111111111111"
-                items:
-                  - id: 12
-                    request_id: 7
-                    stablecoin: "USDC"
-                    amount_usd: 100.0
-                    recipient: "0x2222222222222222222222222222222222222222"
-                    ready_at: "2025-10-01T12:34:56Z"
-                    status: ready
-                    block_num: 41234567
-                    created_at: "2025-09-24T12:34:56Z"
-                    updated_at: "2025-09-24T12:34:56Z"
-                  - id: 13
-                    request_id: 8
-                    stablecoin: "USDT"
-                    amount_usd: 150.0
-                    recipient: "0x3333333333333333333333333333333333333333"
-                    ready_at: "2025-10-05T12:34:56Z"
-                    status: pending
-                    block_num: 41234600
-                    created_at: "2025-09-28T12:34:56Z"
-                    updated_at: "2025-09-28T12:34:56Z"
-
+  - url: https://api.example.com
 components:
-  securitySchemes: {}
-  parameters:
-    AddrPath:
-      name: addr
-      in: path
-      required: true
-      description: |
-        EVM address. Case-insensitive; normalized to lowercase on the server.
-      schema:
-        type: string
-        pattern: "^0x[0-9a-fA-F]{40}$"
-        example: "0x1111111111111111111111111111111111111111"
-
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
-    Error:
-      type: object
-      required: [error]
-      properties:
-        error:
-          type: string
-          example: "bad json"
-
-    RegisterRequest:
-      type: object
-      required: [address]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        inviteCode:
-          type: string
-          description: Invite code obtained from an inviter.
-          minLength: 1
-          maxLength: 16
-      additionalProperties: false
-
-    RegisterResponse:
+    Workflow:
       type: object
       properties:
-        ok:
-          type: boolean
-
-    BindParentRequest:
+        id: {type: string, format: uuid}
+        idea: {type: string}
+        status: {type: string}
+        current_stage: {type: string}
+        stage_detail: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Asset:
       type: object
-      required: [inviteCode]
       properties:
-        inviteCode:
-          type: string
-          description: Invite code issued by the desired parent.
-          minLength: 1
-          maxLength: 16
-      additionalProperties: false
-
-    InviteCodeResponse:
+        type: {type: string}
+        version: {type: integer}
+        status: {type: string}
+        summary: {type: string}
+        updated_at: {type: string, format: date-time}
+    AssetResponse:
       type: object
-      required: [address, inviteCode]
       properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        inviteCode:
-          type: string
-          description: Deterministic code (currently last 8 hex chars of the address).
-          example: "0000cdef"
-
-    ParentInviteResponse:
+        workflow: {$ref: '#/components/schemas/Workflow'}
+        asset: {$ref: '#/components/schemas/Asset'}
+        payload: {}
+    CharacterImage:
       type: object
-      required: [address, parentBound]
       properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        parentBound:
-          type: boolean
-        parentAddress:
-          allOf:
-            - $ref: "#/components/schemas/Address"
-          nullable: true
-        parentInviteCode:
-          type: string
-          nullable: true
-          description: Invite code belonging to the bound parent (null when no parent yet).
-
-    UserSummary:
-      type: object
-      required:
-        - address
-        - level
-        - points
-        - rakebackPercent
-        - children_staking_rakeback_percent
-        - grandchildren_staking_rakeback_percent
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        level:
-          type: integer
-          minimum: 1
-          maximum: 5
-        points:
-          type: number
-          format: double
-        rakebackPercent:
-          type: number
-          format: double
-          description: Fraction (e.g., 0.05 == 5%).
-        children_staking_rakeback_percent:
-          type: number
-          format: double
-          description: Fraction applied to children's pre‑rake staking rewards.
-        grandchildren_staking_rakeback_percent:
-          type: number
-          format: double
-          description: Fraction applied to grandchildren's pre‑rake staking rewards.
-
-    UserNetwork:
-      type: object
-      required:
-        [
-          children,
-          grandchildren,
-          active_traders_among_children_and_grandchildren,
-          downline_total_perp_volume_usd,
-        ]
-      properties:
-        children:
-          type: integer
-          format: int64
-        grandchildren:
-          type: integer
-          format: int64
-        active_traders_among_children_and_grandchildren:
-          type: integer
-          format: int64
-        downline_total_perp_volume_usd:
-          type: number
-          format: double
-          description: Total all‑time perp trading volume from children and grandchildren.
-
-    UserRewards:
-      type: object
-      required: [address, miles, total_reward, reward_to_be_claimed]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        miles:
-          type: number
-          format: double
-        total_reward:
-          type: number
-          format: double
-          description: Lifetime rewards in USD.
-        reward_to_be_claimed:
-          type: number
-          format: double
-          description: Unclaimed rewards in USD.
-
-    UserStakingRewards:
-      type: object
-      required:
-        [
-          address,
-          lifetime_staking_reward,
-          ytd_staking_reward,
-          staking_reward_to_be_claimed,
-        ]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        lifetime_staking_reward:
-          type: number
-          format: double
-        ytd_staking_reward:
-          type: number
-          format: double
-        staking_reward_to_be_claimed:
-          type: number
-          format: double
-
-    # ---- Affiliations ----
-    UserAffiliationsResponse:
-      type: object
-      required: [address, page, page_size, total, items]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        page:
-          type: integer
-          minimum: 1
-        page_size:
-          type: integer
-          minimum: 1
-          maximum: 500
-        total:
-          type: integer
-          minimum: 0
-        items:
+        character_id: {type: string}
+        name: {type: string}
+        prompt: {type: string}
+        url: {type: string}
+        mime_type: {type: string}
+        storage_key: {type: string}
+        origin: {type: string, enum: [ai, uploaded, hybrid]}
+        references:
           type: array
           items:
-            $ref: "#/components/schemas/AffiliationItem"
-
-    AffiliationItem:
+            type: object
+            properties:
+              name: {type: string}
+              url: {type: string}
+              mime_type: {type: string}
+              storage_key: {type: string}
+    SceneImage:
       type: object
-      required:
-        [
-          address,
-          affiliation_type,
-          joined_at,
-          action_type,
-          miles_earned,
-          reward_earned_usd,
-        ]
       properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        affiliation_type:
-          type: string
-          enum: [children, grandchildren]
-        joined_at:
-          type: string
-          format: date-time
-        action_type:
-          type: string
-          enum: [trade, stake]
-        miles_earned:
-          type: number
-          format: double
-          description: Miles the referrer earned due to this affiliate for this action.
-        reward_earned_usd:
-          type: number
-          format: double
-          description: |
-            Rewards (USD) the referrer earned due to this affiliate. Non‑zero for `"stake"` rows only.
-
-    ClaimableResponse:
+        scene_id: {type: string}
+        url: {type: string}
+        mime_type: {type: string}
+        prompt: {type: string}
+        params:
+          type: object
+          properties:
+            description_prompt: {type: string}
+            visual_style: {type: string}
+            ratio: {type: string}
+        storage_key: {type: string}
+    SceneVideo:
       type: object
-      required: [address, kind, claims]
       properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        kind:
-          $ref: "#/components/schemas/RewardKind"
-        claims:
+        scene_id: {type: string}
+        url: {type: string}
+        mime_type: {type: string}
+        prompt: {type: string}
+        storage_key: {type: string}
+    VersionPointer:
+      type: object
+      properties:
+        versions:
           type: array
           items:
-            $ref: "#/components/schemas/ClaimBundle"
-      description: |
-        `claims` contains one entry per epoch with a signature that authorizes claiming
-        all unclaimed week-bits represented by `nonceMask` for the specified reward `kind`.
-
-    ClaimBundle:
-      type: object
-      required: [epoch, amount, nonceMask, signature]
-      properties:
-        epoch:
+            type: object
+            properties:
+              id: {type: string, format: uuid}
+              version: {type: integer}
+              status: {type: string}
+              summary: {type: string}
+              asset_type: {type: string}
+              created_at: {type: string, format: date-time}
+              updated_at: {type: string, format: date-time}
+        selected_version:
           type: integer
-          format: int64
-          description: Epoch index (uint64).
-          example: 123
-        amount:
-          type: string
-          description: |
-            Decimal string representing 18‑decimal units (wei-like) for USD amount.
-            Example: "1500000000000000000" == $1.5
-          pattern: "^[0-9]+$"
-          example: "1500000000000000000"
-        nonceMask:
-          type: string
-          description: Hex bitmask for weeks within the epoch.
-          pattern: "^0x[0-9a-fA-F]+$"
-          example: "0x3"
-        signature:
-          type: string
-          description: 65‑byte ECDSA signature (0x‑prefixed) over EIP‑712 typed data.
-          pattern: "^0x[0-9a-fA-F]+$"
-          example: "0x8b5e0a...c9"
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200': {description: OK}
 
-    SignClaimRequest:
-      type: object
-      required: [address, epoch]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        epoch:
-          type: integer
-          format: int64
-          description: Epoch to aggregate/signed claim for.
-      additionalProperties: false
+  /api/v1/users/register:
+    post:
+      summary: Register with email/password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string}
+                password: {type: string}
+      responses:
+        '200': {description: Auth tokens payload}
+  /api/v1/users/login:
+    post:
+      summary: Login with email/password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string}
+                password: {type: string}
+      responses:
+        '200': {description: Auth tokens payload}
+  /api/v1/users/oauth/{provider}/start:
+    get:
+      summary: Start OAuth flow
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: {type: string, enum: [google]}
+        - in: query
+          name: redirect_uri
+          schema: {type: string}
+      responses:
+        '302': {description: Redirect to provider}
+  /api/v1/users/oauth/{provider}/callback:
+    get:
+      summary: OAuth callback
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: {type: string}
+        - in: query
+          name: code
+          schema: {type: string}
+        - in: query
+          name: state
+          schema: {type: string}
+      responses:
+        '302': {description: Redirect with tokens}
+  /api/v1/users/token/refresh:
+    post:
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string}
+      responses:
+        '200': {description: Auth tokens payload}
 
-    SignClaimResponse:
-      type: object
-      required: [address, kind, epoch, amount, nonceMask, signature]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        kind:
-          $ref: "#/components/schemas/RewardKind"
-        epoch:
-          type: integer
-          format: int64
-        amount:
-          type: string
-          pattern: "^[0-9]+$"
-          description: Decimal string with 18 decimals (wei-like).
-        nonceMask:
-          type: string
-          pattern: "^0x[0-9a-fA-F]+$"
-        signature:
-          type: string
-          pattern: "^0x[0-9a-fA-F]+$"
+  /api/v1/workflows/story:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Generate story and characters
+      parameters:
+        - in: query
+          name: async
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                idea: {type: string}
+                workflow_id: {type: string, format: uuid}
+                story_style: {type: string}
+                visual_style: {type: string}
+                aspect_ratio: {type: string}
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                idea: {type: string}
+                workflow_id: {type: string, format: uuid}
+                story_style: {type: string}
+                visual_style: {type: string}
+                aspect_ratio: {type: string}
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200': {description: Story asset with characters}
+        '202': {description: Accepted async}
 
-    RedeemsReadyResponse:
-      type: object
-      required: [address, items]
-      properties:
-        address:
-          $ref: "#/components/schemas/Address"
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/RedeemEntry"
+  /api/v1/workflows/{workflowID}/plot:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Generate plot and scenes (chapters currently default to one)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: async
+          schema: {type: string}
+      responses:
+        '200': {description: Plot asset}
+        '202': {description: Accepted async}
+    get:
+      security: [{bearerAuth: []}]
+      summary: Fetch plot asset (supports version query)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: version
+          schema: {type: integer}
+      responses:
+        '200': {description: Plot asset}
 
-    RedeemEntry:
-      type: object
-      description: Vault redeem request that is either ready to claim now or pending until its ready_at timestamp.
-      required:
-        [id, request_id, stablecoin, amount_usd, recipient, ready_at, status, block_num, created_at, updated_at]
-      properties:
-        id: { type: integer, format: int64 }
-        request_id: { type: integer, format: int64 }
-        stablecoin:
-          type: string
-          enum: [USDT, USDC]
-        amount_usd:
-          type: number
-          format: double
-        recipient:
-          $ref: "#/components/schemas/Address"
-        ready_at:
-          type: string
-          format: date-time
-          description: Timestamp when the redeem becomes claimable.
-        status:
-          type: string
-          enum: [ready, pending]
-        block_num:
-          type: integer
-          format: int64
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
+  /api/v1/workflows/{workflowID}/characters/images:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Generate character images from prompts
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Character images asset}
+        '202': {description: Accepted async}
+    get:
+      security: [{bearerAuth: []}]
+      summary: Fetch character images asset (supports version query)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: version
+          schema: {type: integer}
+      responses:
+        '200': {description: Character images asset}
 
-    Address:
-      type: string
-      pattern: "^0x[0-9a-fA-F]{40}$"
-      example: "0x1111111111111111111111111111111111111111"
+  /api/v1/workflows/{workflowID}/characters/{characterID}/images:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Regenerate a single character image (prompt or prompt + reference images)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: characterID
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt: {type: string}
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                prompt: {type: string}
+                references:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200': {description: Updated character images asset}
 
-    RewardKind:
-      type: integer
-      enum: [0, 1]
-      description: |
-        `0` = Rakebacks (broker-fee + affiliate staking reward rakebacks).  
-        `1` = Post-rake staking rewards (user's own).
+  /api/v1/workflows/{workflowID}/characters/{characterID}/images/upload:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Upload a character image (manual)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: characterID
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200': {description: Updated character images asset}
 
-security: [] # no auth at the API layer
+  /api/v1/workflows/{workflowID}/characters:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Add a character to the story payload
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name, role_type, player, profile, image_prompt]
+              properties:
+                id: {type: string}
+                name: {type: string}
+                role_type: {type: string}
+                player: {type: integer}
+                profession: {type: string}
+                profile: {type: string}
+                image_prompt: {type: string}
+                voice: {type: string}
+      responses:
+        '200': {description: Updated story asset}
+  /api/v1/workflows/{workflowID}/characters/{characterID}:
+    delete:
+      security: [{bearerAuth: []}]
+      summary: Remove a character from the story payload
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: characterID
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Updated story asset}
+
+  /api/v1/workflows/{workflowID}/scenes/images:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Generate all scene images
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: async
+          schema: {type: string}
+      responses:
+        '200': {description: Scene images asset}
+        '202': {description: Accepted async}
+    get:
+      security: [{bearerAuth: []}]
+      summary: Fetch scene images asset (supports version query)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: version
+          schema: {type: integer}
+      responses:
+        '200': {description: Scene images asset}
+
+  /api/v1/workflows/{workflowID}/scenes/{sceneID}/images:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Regenerate a specific scene image
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: sceneID
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description_prompt: {type: string}
+      responses:
+        '200': {description: Updated scene images asset}
+
+  /api/v1/workflows/{workflowID}/scenes/{sceneID}/videos:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Regenerate a single scene video with a new motion prompt
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: sceneID
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: {type: string}
+                veo_model: {type: string}
+      responses:
+        '202': {description: Video job queued}
+
+  /api/v1/workflows/{workflowID}/videos:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Generate videos for all scenes or a specific scene
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scene_id: {type: string}
+                veo_model: {type: string}
+      responses:
+        '202': {description: Video job queued}
+    get:
+      security: [{bearerAuth: []}]
+      summary: Fetch videos asset (supports version query)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: version
+          schema: {type: integer}
+      responses:
+        '200': {description: Videos asset}
+
+  /api/v1/video-jobs/{jobID}:
+    get:
+      security: [{bearerAuth: []}]
+      summary: Get video job status
+      parameters:
+        - in: path
+          name: jobID
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Job status}
+
+  /api/v1/workflows/{workflowID}:
+    get:
+      security: [{bearerAuth: []}]
+      summary: Get workflow
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Workflow}
+
+  /api/v1/workflows:
+    get:
+      security: [{bearerAuth: []}]
+      summary: List workflows
+      parameters:
+        - in: query
+          name: limit
+          schema: {type: integer}
+        - in: query
+          name: cursor
+          schema: {type: string}
+      responses:
+        '200': {description: Workflow list with cursor}
+
+  /api/v1/workflows/{workflowID}/story:
+    get:
+      security: [{bearerAuth: []}]
+      summary: Fetch story asset (supports version query)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: query
+          name: version
+          schema: {type: integer}
+      responses:
+        '200': {description: Story asset}
+
+  /api/v1/workflows/{workflowID}/status:
+    get:
+      security: [{bearerAuth: []}]
+      summary: Get workflow stage/status snapshot
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Status}
+
+  /api/v1/workflows/{workflowID}/chapters:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Add a chapter
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: {type: string}
+                title: {type: string}
+      responses:
+        '200': {description: Updated plot asset}
+
+  /api/v1/workflows/{workflowID}/chapters/{chapterID}:
+    delete:
+      security: [{bearerAuth: []}]
+      summary: Remove an empty chapter
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: chapterID
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Updated plot asset}
+
+  /api/v1/workflows/{workflowID}/chapters/{chapterID}/scenes:
+    post:
+      security: [{bearerAuth: []}]
+      summary: Add a scene to a chapter at a specific index
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: chapterID
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scene, insert_index]
+              properties:
+                insert_index: {type: integer, minimum: 0}
+                scene:
+                  type: object
+                  properties:
+                    scene_id: {type: string}
+                    short_introduction: {type: string}
+                    description: {type: string}
+                    character_ids:
+                      type: array
+                      items: {type: string}
+                    image_prompt_params:
+                      type: object
+                      properties:
+                        description_prompt: {type: string}
+                        visual_style: {type: string}
+                        ratio: {type: string}
+                    video_motion_prompt: {type: string}
+                    transition_logic:
+                      type: object
+                      properties:
+                        type: {type: string}
+                        details:
+                          type: object
+                          properties:
+                            next_scene: {type: string}
+                            options:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  text: {type: string}
+                                  next_scene: {type: string}
+      responses:
+        '200': {description: Updated plot asset}
+
+  /api/v1/workflows/{workflowID}/chapters/{chapterID}/scenes/{sceneID}:
+    delete:
+      security: [{bearerAuth: []}]
+      summary: Remove a scene (references to it are cleared)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: chapterID
+          required: true
+          schema: {type: string}
+        - in: path
+          name: sceneID
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Updated plot asset}
+    patch:
+      security: [{bearerAuth: []}]
+      summary: Patch a scene (supports scene_id rename; transition targets validated to chapter)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: chapterID
+          required: true
+          schema: {type: string}
+        - in: path
+          name: sceneID
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scene_id: {type: string}
+                short_introduction: {type: string}
+                description: {type: string}
+                character_ids:
+                  type: array
+                  items: {type: string}
+                image_prompt_params:
+                  type: object
+                  properties:
+                    description_prompt: {type: string}
+                    visual_style: {type: string}
+                    ratio: {type: string}
+                video_motion_prompt: {type: string}
+                transition_logic:
+                  type: object
+                  properties:
+                    type: {type: string}
+                    details:
+                      type: object
+                      properties:
+                        next_scene: {type: string}
+                        options:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              text: {type: string}
+                              next_scene: {type: string}
+      responses:
+        '200': {description: Updated plot asset}
+
+  /api/v1/workflows/{workflowID}/assets/{assetType}/versions:
+    get:
+      security: [{bearerAuth: []}]
+      summary: List asset versions and selected pointer (story, character_images, scene_images, videos)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: assetType
+          required: true
+          schema: {type: string, enum: [story, character_images, scene_images, videos]}
+        - in: query
+          name: limit
+          schema: {type: integer}
+      responses:
+        '200':
+          description: Versions list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VersionPointer'}
+
+  /api/v1/workflows/{workflowID}/assets/{assetType}/selection:
+    patch:
+      security: [{bearerAuth: []}]
+      summary: Set or clear selected asset version (no copy)
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: assetType
+          required: true
+          schema: {type: string, enum: [story, character_images, scene_images, videos]}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                  description: Omit/null to clear selection
+      responses:
+        '200': {description: Selected version set}
+
+  /api/v1/workflows/{workflowID}/story/summary:
+    patch:
+      security: [{bearerAuth: []}]
+      summary: Update story summary text only
+      parameters:
+        - in: path
+          name: workflowID
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: {type: string}
+      responses:
+        '200': {description: Updated story asset}
